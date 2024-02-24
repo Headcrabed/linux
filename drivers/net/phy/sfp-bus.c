@@ -81,6 +81,18 @@ static const struct sfp_quirk sfp_quirks[] = {
 		.part = "8330-262D-E",
 		.modes = sfp_quirk_2500basex,
 	}, {
+		// ODI DFP-34X-2C2 can operate at 2500base-X, but
+		// incorrectly report 1300MBd NRZ in their EEPROM.
+		// In early batches, vendor id is OEM, but fixed
+		// in newer batches.
+		.vendor = "ODI",
+		.part = "DFP-34X-2C2",
+		.modes = sfp_quirk_2500basex,
+	}, {
+		.vendor = "OEM",
+		.part = "DFP-34X-2C2",
+		.modes = sfp_quirk_2500basex,
+	}, {
 		.vendor = "UBNT",
 		.part = "UF-INSTANT",
 		.modes = sfp_quirk_ubnt_uf_instant,
