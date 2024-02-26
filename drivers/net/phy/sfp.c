@@ -495,6 +495,13 @@ static const struct sfp_quirk sfp_quirks[] = {
 	// 2500MBd NRZ in their EEPROM
 	SFP_QUIRK_M("Lantech", "8330-262D-E", sfp_quirk_2500basex),
 
+	// ODI DFP-34X-2C2 can operate at 2500base-X, but incorrectly report 1300MBd
+	// NRZ in the EEPROM.
+	// Besides, In early batches, vendor id is set to OEM, but that is fixed in
+	// newer batches.
+	SFP_QUIRK_M("ODI", "DFP-34X-2C2", sfp_quirk_2500basex),
+	SFP_QUIRK_M("OEM", "DFP-34X-2C2", sfp_quirk_2500basex),
+
 	SFP_QUIRK_M("UBNT", "UF-INSTANT", sfp_quirk_ubnt_uf_instant),
 
 	// Walsun HXSX-ATR[CI]-1 don't identify as copper, and use the
