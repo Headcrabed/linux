@@ -291,8 +291,7 @@ static int mes_userq_mqd_create(struct amdgpu_userq_mgr *uq_mgr,
 	r = pm_runtime_get_sync(adev_to_drm(adev)->dev);
 	if (r < 0) {
 		dev_err(adev->dev, "pm_runtime_get_sync() failed for userqueue mqd create\n");
-		pm_runtime_put_autosuspend(adev_to_drm(adev)->dev);
-		goto free_mqd;
+		goto deference_pm;
 	}
 
 	r = mqd_hw_default->init_mqd(adev, (void *)queue->mqd.cpu_ptr, userq_props);
@@ -330,6 +329,7 @@ free_ctx:
 free_mqd:
 	amdgpu_userqueue_destroy_object(uq_mgr, &queue->mqd);
 	pm_runtime_mark_last_busy(adev_to_drm(adev)->dev);
+deference_pm:
 	pm_runtime_put_autosuspend(adev_to_drm(adev)->dev);
 
 free_props:
