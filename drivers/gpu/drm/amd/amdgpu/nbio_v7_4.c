@@ -100,10 +100,12 @@ static void nbio_v7_4_query_ras_error_count(struct amdgpu_device *adev,
 
 static void nbio_v7_4_remap_hdp_registers(struct amdgpu_device *adev)
 {
-	WREG32_SOC15(NBIO, 0, mmREMAP_HDP_MEM_FLUSH_CNTL,
-		adev->rmmio_remap.reg_offset + KFD_MMIO_REMAP_HDP_MEM_FLUSH_CNTL);
-	WREG32_SOC15(NBIO, 0, mmREMAP_HDP_REG_FLUSH_CNTL,
-		adev->rmmio_remap.reg_offset + KFD_MMIO_REMAP_HDP_REG_FLUSH_CNTL);
+	if (adev->rmmio_remap.bus_addr) {
+		WREG32_SOC15(NBIO, 0, mmREMAP_HDP_MEM_FLUSH_CNTL,
+			     adev->rmmio_remap.reg_offset + KFD_MMIO_REMAP_HDP_MEM_FLUSH_CNTL);
+		WREG32_SOC15(NBIO, 0, mmREMAP_HDP_REG_FLUSH_CNTL,
+			     adev->rmmio_remap.reg_offset + KFD_MMIO_REMAP_HDP_REG_FLUSH_CNTL);
+	}
 }
 
 static u32 nbio_v7_4_get_rev_id(struct amdgpu_device *adev)
@@ -791,6 +793,7 @@ static void nbio_v7_4_program_aspm(struct amdgpu_device *adev)
 
 static void nbio_v7_4_set_reg_remap(struct amdgpu_device *adev)
 {
+#ifdef CONFIG_X86_64
 	if (!amdgpu_sriov_vf(adev) && (PAGE_SIZE <= 4096)) {
 		adev->rmmio_remap.reg_offset = MMIO_REG_HOLE_OFFSET;
 		adev->rmmio_remap.bus_addr = adev->rmmio_base + MMIO_REG_HOLE_OFFSET;
@@ -800,6 +803,12 @@ static void nbio_v7_4_set_reg_remap(struct amdgpu_device *adev)
 					 mmBIF_BX_DEV0_EPF0_VF0_HDP_MEM_COHERENCY_FLUSH_CNTL) << 2;
 		adev->rmmio_remap.bus_addr = 0;
 	}
+#else
+	adev->rmmio_remap.reg_offset =
+		SOC15_REG_OFFSET(NBIO, 0,
+				 mmBIF_BX_DEV0_EPF0_VF0_HDP_MEM_COHERENCY_FLUSH_CNTL) << 2;
+	adev->rmmio_remap.bus_addr = 0;
+#endif
 }
 
 const struct amdgpu_nbio_funcs nbio_v7_4_funcs = {
