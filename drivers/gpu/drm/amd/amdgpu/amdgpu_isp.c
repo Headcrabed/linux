@@ -155,7 +155,7 @@ static int is_valid_isp_device(struct device *isp_parent, struct device *amdgpu_
  * isp_user_buffer_alloc - create user buffer object (BO) for isp
  *
  * @dev: isp device handle
- * @dma_buf: DMABUF handle for isp buffer allocated in system memory
+ * @dmabuf: DMABUF handle for isp buffer allocated in system memory
  * @buf_obj: GPU buffer object handle to initialize
  * @buf_addr: GPU addr of the pinned BO to initialize
  *
