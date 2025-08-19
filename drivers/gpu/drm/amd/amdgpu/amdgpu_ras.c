@@ -3513,6 +3513,7 @@ static int amdgpu_ras_page_retirement_thread(void *param)
 		if (kthread_should_stop())
 			break;
 
+		mutex_lock(&con->poison_lock);
 		gpu_reset = 0;
 
 		do {
@@ -3569,6 +3570,7 @@ static int amdgpu_ras_page_retirement_thread(void *param)
 			/* Wake up work to save bad pages to eeprom */
 			schedule_delayed_work(&con->page_retirement_dwork, 0);
 		}
+		mutex_unlock(&con->poison_lock);
 	}
 
 	return 0;
@@ -3649,6 +3651,7 @@ int amdgpu_ras_recovery_init(struct amdgpu_device *adev, bool init_bp_info)
 	}
 
 	mutex_init(&con->recovery_lock);
+	mutex_init(&con->poison_lock);
 	INIT_WORK(&con->recovery_work, amdgpu_ras_do_recovery);
 	atomic_set(&con->in_recovery, 0);
 	atomic_set(&con->rma_in_recovery, 0);
