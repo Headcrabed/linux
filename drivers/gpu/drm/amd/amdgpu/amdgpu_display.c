@@ -1363,6 +1363,34 @@ static const struct drm_prop_enum_list amdgpu_dither_enum_list[] = {
 	{ AMDGPU_FMT_DITHER_ENABLE, "on" },
 };
 
+static const struct drm_prop_enum_list amdgpu_user_pixenc_list[] = {
+	{ 0, "auto" },
+	{ DRM_COLOR_FORMAT_RGB444, "rgb" },
+	{ DRM_COLOR_FORMAT_YCBCR444, "ycbcr444" },
+	{ DRM_COLOR_FORMAT_YCBCR422, "ycbcr422" },
+	{ DRM_COLOR_FORMAT_YCBCR420, "ycbcr420" },
+};
+
+bool amdgpu_user_pixenc_from_name(
+	unsigned int *user_pixenc,
+	const char *pixenc_name)
+{
+	bool found = false;
+
+	if (pixenc_name && (*pixenc_name != '\0')) {
+		const int sz = ARRAY_SIZE(amdgpu_user_pixenc_list);
+		int i;
+
+		for (i = 0; !found && i < sz; ++i) {
+			if (strcmp(pixenc_name, amdgpu_user_pixenc_list[i].name) == 0) {
+				*user_pixenc = amdgpu_user_pixenc_list[i].type;
+				found = true;
+			}
+		}
+	}
+	return found;
+}
+
 int amdgpu_display_modeset_create_props(struct amdgpu_device *adev)
 {
 	int sz;
@@ -1408,6 +1436,14 @@ int amdgpu_display_modeset_create_props(struct amdgpu_device *adev)
 		drm_property_create_enum(adev_to_drm(adev), 0,
 					 "dither",
 					 amdgpu_dither_enum_list, sz);
+
+	sz = ARRAY_SIZE(amdgpu_user_pixenc_list);
+	adev->mode_info.pixel_encoding_property =
+		drm_property_create_enum(adev_to_drm(adev), 0,
+			"pixel encoding",
+			amdgpu_user_pixenc_list, sz);
+	if (!adev->mode_info.pixel_encoding_property)
+		return -ENOMEM;
 
 	return 0;
 }

@@ -326,6 +326,8 @@ struct amdgpu_mode_info {
 	struct drm_property *audio_property;
 	/* FMT dithering */
 	struct drm_property *dither_property;
+	/* output pixel format encoding override */
+	struct drm_property *pixel_encoding_property;
 	/* hardcoded DFP edid from BIOS */
 	const struct drm_edid *bios_hardcoded_edid;
 

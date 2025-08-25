@@ -2993,6 +2993,11 @@ static enum surface_update_type check_update_surfaces_for_stream(
 		if (stream_update->output_csc_transform)
 			su_flags->bits.out_csc = 1;
 
+		if (stream_update->timing_for_pixel_encoding) {
+			su_flags->bits.pixel_encoding = 1;
+			elevate_update_type(&overall_type, UPDATE_TYPE_FULL);
+		}
+
 		/* Output transfer function changes do not require bandwidth recalculation,
 		 * so don't trigger a full update
 		 */
@@ -3347,6 +3352,8 @@ static void copy_stream_update_to_stream(struct dc *dc,
 			update->dsc_config = NULL;
 		}
 	}
+	if (update->timing_for_pixel_encoding)
+		stream->timing = *update->timing_for_pixel_encoding;
 	if (update->scaler_sharpener_update)
 		stream->scaler_sharpener_update = *update->scaler_sharpener_update;
 	if (update->sharpening_required)
@@ -3600,6 +3607,7 @@ static void commit_planes_do_stream_update(struct dc *dc,
 					stream_update->vsc_infopacket ||
 					stream_update->vsp_infopacket ||
 					stream_update->hfvsif_infopacket ||
+					stream_update->timing_for_pixel_encoding ||
 					stream_update->adaptive_sync_infopacket ||
 					stream_update->vtem_infopacket) {
 				resource_build_info_frame(pipe_ctx);

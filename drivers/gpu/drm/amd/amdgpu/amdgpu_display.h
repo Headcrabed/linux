@@ -54,4 +54,7 @@ int amdgpu_display_resume_helper(struct amdgpu_device *adev);
 int amdgpu_display_get_scanout_buffer(struct drm_plane *plane,
 				      struct drm_scanout_buffer *sb);
 
+bool amdgpu_user_pixenc_from_name(unsigned int *user_pixenc,
+				  const char *pixenc_name);
+
 #endif
