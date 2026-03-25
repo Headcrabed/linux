@@ -698,7 +698,13 @@ static ssize_t exfat_file_write_iter(struct kiocb *iocb, struct iov_iter *iter)
 			goto unlock;
 	}
 
-	ret = __generic_file_write_iter(iocb, iter);
+	if (iocb->ki_flags & IOCB_DIRECT) {
+		ret = iomap_dio_rw(iocb, iter, &exfat_write_iomap_ops,
+				&exfat_write_dio_ops, 0, NULL, 0);
+		if (ret == -ENOTBLK)
+			ret = 0;
+	} else
+		ret = __generic_file_write_iter(iocb, iter);
 	if (ret < 0)
 		goto unlock;
 
@@ -725,11 +731,31 @@ unlock:
 static ssize_t exfat_file_read_iter(struct kiocb *iocb, struct iov_iter *iter)
 {
 	struct inode *inode = file_inode(iocb->ki_filp);
+	ssize_t ret;
 
 	if (unlikely(exfat_forced_shutdown(inode->i_sb)))
 		return -EIO;
 
-	return generic_file_read_iter(iocb, iter);
+	inode_lock_shared(inode);
+	if (iocb->ki_flags & IOCB_DIRECT) {
+		size_t count = iov_iter_count(iter);
+
+		if ((iocb->ki_pos | count) & (inode->i_sb->s_blocksize - 1)) {
+			ret = -EINVAL;
+			goto inode_unlock;
+		}
+
+		file_accessed(iocb->ki_filp);
+		ret = iomap_dio_rw(iocb, iter, &exfat_read_iomap_ops, NULL, 0,
+				NULL, 0);
+	} else {
+		ret = generic_file_read_iter(iocb, iter);
+	}
+
+inode_unlock:
+	inode_unlock_shared(inode);
+
+	return ret;
 }
 
 static vm_fault_t exfat_page_mkwrite(struct vm_fault *vmf)
