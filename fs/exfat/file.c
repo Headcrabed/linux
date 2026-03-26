@@ -337,7 +337,18 @@ int exfat_setattr(struct mnt_idmap *idmap, struct dentry *dentry,
 
 	if ((attr->ia_valid & ATTR_SIZE) &&
 	    attr->ia_size > i_size_read(inode)) {
+		loff_t old_size = i_size_read(inode);
+
 		error = exfat_cont_expand(inode, attr->ia_size);
+		if (!error && attr->ia_size > old_size &&
+		    old_size % PAGE_SIZE != 0) {
+			loff_t len = min_t(loff_t,
+					round_up(old_size, PAGE_SIZE) - old_size,
+					attr->ia_size - old_size);
+			error = iomap_zero_range(inode, old_size, len,
+					NULL, &exfat_read_iomap_ops,
+					&exfat_iomap_folio_ops, NULL);
+		}
 		if (error || attr->ia_valid == ATTR_SIZE)
 			return error;
 		attr->ia_valid &= ~ATTR_SIZE;
@@ -384,7 +395,10 @@ int exfat_setattr(struct mnt_idmap *idmap, struct dentry *dentry,
 	exfat_truncate_inode_atime(inode);
 
 	if (attr->ia_valid & ATTR_SIZE) {
-		error = exfat_block_truncate_page(inode, attr->ia_size);
+		inode_dio_wait(inode);
+		error = iomap_truncate_page(inode, attr->ia_size, NULL,
+				&exfat_read_iomap_ops,
+				&exfat_iomap_folio_ops, NULL);
 		if (error)
 			goto out;
 
@@ -619,9 +633,13 @@ int exfat_file_fsync(struct file *filp, loff_t start, loff_t end, int datasync)
 	if (unlikely(exfat_forced_shutdown(inode->i_sb)))
 		return -EIO;
 
-	err = __generic_file_fsync(filp, start, end, datasync);
+	err = file_write_and_wait_range(filp, start, end);
 	if (err)
 		return err;
+
+	if (!datasync)
+		err = __exfat_write_inode(inode, 1);
+	write_inode_now(inode, !datasync);
 
 	err = sync_blockdev(inode->i_sb->s_bdev);
 	if (err)
@@ -648,9 +666,53 @@ int exfat_extend_valid_size(struct inode *inode, loff_t off, bool bsync)
 				NULL);
 		if (!ret && bsync)
 			ret = filemap_write_and_wait_range(inode->i_mapping,
-					old_valid_size, off - 1);
+							   old_valid_size,
+							   off - 1);
 	}
 
+	return ret;
+}
+
+static ssize_t exfat_dio_write_iter(struct kiocb *iocb, struct iov_iter *from)
+{
+	ssize_t ret;
+
+	ret = iomap_dio_rw(iocb, from, &exfat_write_iomap_ops,
+			&exfat_write_dio_ops, 0, NULL, 0);
+	if (ret == -ENOTBLK)
+		ret = 0;
+	else if (ret < 0)
+		goto out;
+
+	if (iov_iter_count(from)) {
+		loff_t offset, end;
+		ssize_t written;
+		int ret2;
+
+		offset = iocb->ki_pos;
+		iocb->ki_flags &= ~IOCB_DIRECT;
+		written = iomap_file_buffered_write(iocb, from,
+				&exfat_write_iomap_ops, &exfat_iomap_folio_ops,
+				NULL);
+		if (written < 0) {
+			ret = written;
+			goto out;
+		}
+
+		ret += written;
+		end = iocb->ki_pos + written - 1;
+		ret2 = filemap_write_and_wait_range(iocb->ki_filp->f_mapping,
+				offset, end);
+		if (ret2) {
+			ret = -EIO;
+			goto out;
+		}
+		if (!ret2)
+			invalidate_mapping_pages(iocb->ki_filp->f_mapping,
+					offset >> PAGE_SHIFT,
+					end >> PAGE_SHIFT);
+	}
+out:
 	return ret;
 }
 
@@ -662,6 +724,7 @@ static ssize_t exfat_file_write_iter(struct kiocb *iocb, struct iov_iter *iter)
 	struct exfat_inode_info *ei = EXFAT_I(inode);
 	loff_t pos = iocb->ki_pos;
 	loff_t valid_size;
+	int err;
 
 	if (unlikely(exfat_forced_shutdown(inode->i_sb)))
 		return -EIO;
@@ -677,34 +740,18 @@ static ssize_t exfat_file_write_iter(struct kiocb *iocb, struct iov_iter *iter)
 	if (ret <= 0)
 		goto unlock;
 
-	if (iocb->ki_flags & IOCB_DIRECT) {
-		unsigned long align = pos | iov_iter_alignment(iter);
-
-		if (!IS_ALIGNED(align, i_blocksize(inode)) &&
-		    !IS_ALIGNED(align, bdev_logical_block_size(inode->i_sb->s_bdev))) {
-			ret = -EINVAL;
-			goto unlock;
-		}
+	err = file_modified(iocb->ki_filp);
+	if (err) {
+		ret = err;
+		goto unlock;
 	}
 
-	if (pos > valid_size) {
-		ret = exfat_extend_valid_size(inode, pos, false);
-		if (ret < 0 && ret != -ENOSPC) {
-			exfat_err(inode->i_sb,
-				"write: fail to zero from %llu to %llu(%zd)",
-				valid_size, pos, ret);
-		}
-		if (ret < 0)
-			goto unlock;
-	}
-
-	if (iocb->ki_flags & IOCB_DIRECT) {
-		ret = iomap_dio_rw(iocb, iter, &exfat_write_iomap_ops,
-				&exfat_write_dio_ops, 0, NULL, 0);
-		if (ret == -ENOTBLK)
-			ret = 0;
-	} else
-		ret = __generic_file_write_iter(iocb, iter);
+	if (iocb->ki_flags & IOCB_DIRECT)
+		ret = exfat_dio_write_iter(iocb, iter);
+	else
+		ret = iomap_file_buffered_write(iocb, iter,
+				&exfat_write_iomap_ops, &exfat_iomap_folio_ops,
+				NULL);
 	if (ret < 0)
 		goto unlock;
 
@@ -737,6 +784,7 @@ static ssize_t exfat_file_read_iter(struct kiocb *iocb, struct iov_iter *iter)
 		return -EIO;
 
 	inode_lock_shared(inode);
+
 	if (iocb->ki_flags & IOCB_DIRECT) {
 		size_t count = iov_iter_count(iter);
 
@@ -760,28 +808,22 @@ inode_unlock:
 
 static vm_fault_t exfat_page_mkwrite(struct vm_fault *vmf)
 {
-	int err;
 	struct inode *inode = file_inode(vmf->vma->vm_file);
-	struct exfat_inode_info *ei = EXFAT_I(inode);
-	loff_t new_valid_size;
+	vm_fault_t ret;
 
 	if (!inode_trylock(inode))
 		return VM_FAULT_RETRY;
 
-	new_valid_size = ((loff_t)vmf->pgoff + 1) << PAGE_SHIFT;
-	new_valid_size = min(new_valid_size, i_size_read(inode));
+	sb_start_pagefault(inode->i_sb);
+	file_update_time(vmf->vma->vm_file);
 
-	if (ei->valid_size < new_valid_size) {
-		err = exfat_extend_valid_size(inode, new_valid_size, false);
-		if (err < 0) {
-			inode_unlock(inode);
-			return vmf_fs_error(err);
-		}
-	}
-
+	filemap_invalidate_lock_shared(inode->i_mapping);
+	ret = iomap_page_mkwrite(vmf, &exfat_mkwrite_iomap_ops, NULL);
+	filemap_invalidate_unlock_shared(inode->i_mapping);
+	sb_end_pagefault(inode->i_sb);
 	inode_unlock(inode);
 
-	return filemap_page_mkwrite(vmf);
+	return ret;
 }
 
 static const struct vm_operations_struct exfat_file_vm_ops = {
@@ -797,6 +839,21 @@ static int exfat_file_mmap_prepare(struct vm_area_desc *desc)
 	if (unlikely(exfat_forced_shutdown(file_inode(desc->file)->i_sb)))
 		return -EIO;
 
+	if (vma_desc_test_flags(desc, VMA_WRITE_BIT)) {
+		struct inode *inode = file_inode(file);
+		loff_t from, to;
+		int err;
+
+		from = ((loff_t)desc->pgoff << PAGE_SHIFT);
+		to = min_t(loff_t, i_size_read(inode),
+				from + vma_desc_size(desc));
+		if (EXFAT_I(inode)->valid_size < to) {
+			err = exfat_extend_valid_size(inode, to, false);
+			if (err)
+				return err;
+		}
+	}
+
 	file_accessed(file);
 	desc->vm_ops = &exfat_file_vm_ops;
 	return 0;
@@ -811,7 +868,24 @@ static ssize_t exfat_splice_read(struct file *in, loff_t *ppos,
 	return filemap_splice_read(in, ppos, pipe, len, flags);
 }
 
+static int exfat_file_open(struct inode *inode, struct file *filp)
+{
+	int err;
+
+	if (unlikely(exfat_forced_shutdown(inode->i_sb)))
+		return -EIO;
+
+	err = generic_file_open(inode, filp);
+	if (err)
+		return err;
+
+	filp->f_mode |= FMODE_CAN_ODIRECT;
+
+	return 0;
+}
+
 const struct file_operations exfat_file_operations = {
+	.open		= exfat_file_open,
 	.llseek		= generic_file_llseek,
 	.read_iter	= exfat_file_read_iter,
 	.write_iter	= exfat_file_write_iter,

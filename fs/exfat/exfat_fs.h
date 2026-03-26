@@ -87,7 +87,7 @@ enum {
 /*
  * helpers for cluster size to byte conversion.
  */
-#define EXFAT_CLU_TO_B(b, sbi)		((b) << (sbi)->cluster_size_bits)
+#define EXFAT_CLU_TO_B(b, sbi)		((loff_t)(b) << (sbi)->cluster_size_bits)
 #define EXFAT_B_TO_CLU(b, sbi)		((b) >> (sbi)->cluster_size_bits)
 #define EXFAT_B_TO_CLU_ROUND_UP(b, sbi)	\
 	(((b - 1) >> (sbi)->cluster_size_bits) + 1)
@@ -551,7 +551,6 @@ struct inode *exfat_iget(struct super_block *sb, loff_t i_pos);
 int __exfat_write_inode(struct inode *inode, int sync);
 int exfat_write_inode(struct inode *inode, struct writeback_control *wbc);
 void exfat_evict_inode(struct inode *inode);
-int exfat_block_truncate_page(struct inode *inode, loff_t from);
 int exfat_map_cluster(struct inode *inode, unsigned int clu_offset,
 		unsigned int *clu, unsigned int *count, int create,
 		bool *balloc);
