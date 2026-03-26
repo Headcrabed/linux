@@ -123,8 +123,9 @@ void exfat_sync_inode(struct inode *inode)
  * Output: errcode, cluster number
  * *clu = (~0), if it's unable to allocate a new cluster
  */
-static int exfat_map_cluster(struct inode *inode, unsigned int clu_offset,
-		unsigned int *clu, unsigned int *count, int create)
+int exfat_map_cluster(struct inode *inode, unsigned int clu_offset,
+		unsigned int *clu, unsigned int *count, int create,
+		bool *balloc)
 {
 	int ret;
 	unsigned int last_clu;
@@ -235,6 +236,7 @@ static int exfat_map_cluster(struct inode *inode, unsigned int clu_offset,
 			}
 		}
 		*count = 1;
+		*balloc = true;
 	}
 
 	/* hint information */
@@ -258,6 +260,7 @@ static int exfat_get_block(struct inode *inode, sector_t iblock,
 	sector_t phys = 0;
 	sector_t valid_blks;
 	loff_t i_size;
+	bool balloc;
 
 	mutex_lock(&sbi->s_lock);
 	i_size = i_size_read(inode);
@@ -268,7 +271,7 @@ static int exfat_get_block(struct inode *inode, sector_t iblock,
 	/* Is this block already allocated? */
 	count = EXFAT_B_TO_CLU_ROUND_UP(bh_result->b_size, sbi);
 	err = exfat_map_cluster(inode, iblock >> sbi->sect_per_clus_bits,
-			&cluster, &count, create);
+			&cluster, &count, create, &balloc);
 	if (err) {
 		if (err != -ENOSPC)
 			exfat_fs_error_ratelimit(sb,

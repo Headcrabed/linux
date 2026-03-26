@@ -14,9 +14,11 @@
 #include <linux/writeback.h>
 #include <linux/filelock.h>
 #include <linux/falloc.h>
+#include <linux/iomap.h>
 
 #include "exfat_raw.h"
 #include "exfat_fs.h"
+#include "iomap.h"
 
 static int exfat_cont_expand(struct inode *inode, loff_t size)
 {
@@ -628,44 +630,28 @@ int exfat_file_fsync(struct file *filp, loff_t start, loff_t end, int datasync)
 	return blkdev_issue_flush(inode->i_sb->s_bdev);
 }
 
-static int exfat_extend_valid_size(struct inode *inode, loff_t new_valid_size)
+int exfat_extend_valid_size(struct inode *inode, loff_t off, bool bsync)
 {
-	int err;
-	loff_t pos;
 	struct exfat_inode_info *ei = EXFAT_I(inode);
-	struct address_space *mapping = inode->i_mapping;
-	const struct address_space_operations *ops = mapping->a_ops;
+	struct exfat_sb_info *sbi = EXFAT_SB(inode->i_sb);
+	loff_t old_valid_size;
+	int ret = 0;
 
-	pos = ei->valid_size;
-	while (pos < new_valid_size) {
-		u32 len;
-		struct folio *folio;
-		unsigned long off;
+	mutex_lock(&sbi->s_lock);
+	old_valid_size = ei->valid_size;
+	mutex_unlock(&sbi->s_lock);
 
-		len = PAGE_SIZE - (pos & (PAGE_SIZE - 1));
-		if (pos + len > new_valid_size)
-			len = new_valid_size - pos;
-
-		err = ops->write_begin(NULL, mapping, pos, len, &folio, NULL);
-		if (err)
-			goto out;
-
-		off = offset_in_folio(folio, pos);
-		folio_zero_new_buffers(folio, off, off + len);
-
-		err = ops->write_end(NULL, mapping, pos, len, len, folio, NULL);
-		if (err < 0)
-			goto out;
-		pos += len;
-
-		balance_dirty_pages_ratelimited(mapping);
-		cond_resched();
+	if (old_valid_size < off) {
+		ret = iomap_zero_range(inode, old_valid_size,
+				off - old_valid_size, NULL,
+				&exfat_write_iomap_ops, &exfat_iomap_folio_ops,
+				NULL);
+		if (!ret && bsync)
+			ret = filemap_write_and_wait_range(inode->i_mapping,
+					old_valid_size, off - 1);
 	}
 
-	return 0;
-
-out:
-	return err;
+	return ret;
 }
 
 static ssize_t exfat_file_write_iter(struct kiocb *iocb, struct iov_iter *iter)
@@ -702,7 +688,7 @@ static ssize_t exfat_file_write_iter(struct kiocb *iocb, struct iov_iter *iter)
 	}
 
 	if (pos > valid_size) {
-		ret = exfat_extend_valid_size(inode, pos);
+		ret = exfat_extend_valid_size(inode, pos, false);
 		if (ret < 0 && ret != -ENOSPC) {
 			exfat_err(inode->i_sb,
 				"write: fail to zero from %llu to %llu(%zd)",
@@ -760,7 +746,7 @@ static vm_fault_t exfat_page_mkwrite(struct vm_fault *vmf)
 	new_valid_size = min(new_valid_size, i_size_read(inode));
 
 	if (ei->valid_size < new_valid_size) {
-		err = exfat_extend_valid_size(inode, new_valid_size);
+		err = exfat_extend_valid_size(inode, new_valid_size, false);
 		if (err < 0) {
 			inode_unlock(inode);
 			return vmf_fs_error(err);
