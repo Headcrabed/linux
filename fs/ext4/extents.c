@@ -1736,6 +1736,13 @@ static int ext4_ext_correct_indexes(handle_t *handle, struct inode *inode,
 	err = ext4_ext_get_access(handle, inode, path + k);
 	if (err)
 		return err;
+	if (unlikely(path[k].p_idx > EXT_LAST_INDEX(path[k].p_hdr))) {
+		EXT4_ERROR_INODE(inode,
+				 "path[%d].p_idx %p > EXT_LAST_INDEX %p",
+				 k, path[k].p_idx,
+				 EXT_LAST_INDEX(path[k].p_hdr));
+		return -EFSCORRUPTED;
+	}
 	path[k].p_idx->ei_block = border;
 	err = ext4_ext_dirty(handle, inode, path + k);
 	if (err)
@@ -1748,6 +1755,14 @@ static int ext4_ext_correct_indexes(handle_t *handle, struct inode *inode,
 		err = ext4_ext_get_access(handle, inode, path + k);
 		if (err)
 			goto clean;
+		if (unlikely(path[k].p_idx > EXT_LAST_INDEX(path[k].p_hdr))) {
+			EXT4_ERROR_INODE(inode,
+					 "path[%d].p_idx %p > EXT_LAST_INDEX %p",
+					 k, path[k].p_idx,
+					 EXT_LAST_INDEX(path[k].p_hdr));
+			err = -EFSCORRUPTED;
+			goto clean;
+		}
 		path[k].p_idx->ei_block = border;
 		err = ext4_ext_dirty(handle, inode, path + k);
 		if (err)
@@ -3363,7 +3378,7 @@ static int ext4_split_extent_zeroout(handle_t *handle, struct inode *inode,
 
 	ext4_ext_mark_initialized(ex);
 
-	ext4_ext_dirty(handle, inode, path + depth);
+	err = ext4_ext_dirty(handle, inode, path + depth);
 	if (err)
 		return err;
 
@@ -4457,9 +4472,13 @@ got_allocated_blocks:
 	path = ext4_ext_insert_extent(handle, inode, path, &newex, flags);
 	if (IS_ERR(path)) {
 		err = PTR_ERR(path);
-		if (allocated_clusters) {
+		/*
+		 * Gracefully handle out of space conditions. If the filesystem
+		 * is inconsistent, we'll just leak allocated blocks to avoid
+		 * causing even more damage.
+		 */
+		if (allocated_clusters && (err == -EDQUOT || err == -ENOSPC)) {
 			int fb_flags = 0;
-
 			/*
 			 * free data blocks we just allocated.
 			 * not a good idea to call discard here directly,
@@ -4603,7 +4622,7 @@ retry:
 		}
 		ret = ext4_map_blocks(handle, inode, &map, flags);
 		if (ret <= 0) {
-			ext4_debug("inode #%lu: block %u: len %u: "
+			ext4_debug("inode #%llu: block %u: len %u: "
 				   "ext4_ext_map_blocks returned %d",
 				   inode->i_ino, map.m_lblk,
 				   map.m_len, ret);
@@ -4955,7 +4974,7 @@ int ext4_convert_unwritten_extents_atomic(handle_t *handle, struct inode *inode,
 		ret = ext4_map_blocks(handle, inode, &map, flags);
 		if (ret != max_blocks)
 			ext4_msg(inode->i_sb, KERN_INFO,
-				     "inode #%lu: block %u: len %u: "
+				     "inode #%llu: block %u: len %u: "
 				     "split block mapping found for atomic write, "
 				     "ret = %d",
 				     inode->i_ino, map.m_lblk,
@@ -4974,7 +4993,7 @@ int ext4_convert_unwritten_extents_atomic(handle_t *handle, struct inode *inode,
 
 	if (ret <= 0 || ret2)
 		ext4_warning(inode->i_sb,
-			     "inode #%lu: block %u: len %u: "
+			     "inode #%llu: block %u: len %u: "
 			     "returned %d or %d",
 			     inode->i_ino, map.m_lblk,
 			     map.m_len, ret, ret2);
@@ -5031,7 +5050,7 @@ int ext4_convert_unwritten_extents(handle_t *handle, struct inode *inode,
 				      EXT4_EX_NOCACHE);
 		if (ret <= 0)
 			ext4_warning(inode->i_sb,
-				     "inode #%lu: block %u: len %u: "
+				     "inode #%llu: block %u: len %u: "
 				     "ext4_ext_map_blocks returned %d",
 				     inode->i_ino, map.m_lblk,
 				     map.m_len, ret);

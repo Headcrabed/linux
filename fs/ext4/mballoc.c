@@ -2266,7 +2266,7 @@ static void ext4_mb_use_best_found(struct ext4_allocation_context *ac,
 	folio_get(ac->ac_buddy_folio);
 	/* store last allocated for subsequent stream allocation */
 	if (ac->ac_flags & EXT4_MB_STREAM_ALLOC) {
-		int hash = ac->ac_inode->i_ino % sbi->s_mb_nr_global_goals;
+		int hash = (unsigned int)ac->ac_inode->i_ino % sbi->s_mb_nr_global_goals;
 
 		WRITE_ONCE(sbi->s_mb_last_groups[hash], ac->ac_f_ex.fe_group);
 	}
@@ -2443,8 +2443,12 @@ int ext4_mb_find_by_goal(struct ext4_allocation_context *ac,
 		return 0;
 
 	err = ext4_mb_load_buddy(ac->ac_sb, group, e4b);
-	if (err)
+	if (err) {
+		if (EXT4_MB_GRP_BBITMAP_CORRUPT(e4b->bd_info) &&
+		    !(ac->ac_flags & EXT4_MB_HINT_GOAL_ONLY))
+			return 0;
 		return err;
+	}
 
 	ext4_lock_group(ac->ac_sb, group);
 	if (unlikely(EXT4_MB_GRP_BBITMAP_CORRUPT(e4b->bd_info)))
@@ -3032,7 +3036,7 @@ ext4_mb_regular_allocator(struct ext4_allocation_context *ac)
 
 	/* if stream allocation is enabled, use global goal */
 	if (ac->ac_flags & EXT4_MB_STREAM_ALLOC) {
-		int hash = ac->ac_inode->i_ino % sbi->s_mb_nr_global_goals;
+		int hash = (unsigned int)ac->ac_inode->i_ino % sbi->s_mb_nr_global_goals;
 
 		ac->ac_g_ex.fe_group = READ_ONCE(sbi->s_mb_last_groups[hash]);
 		ac->ac_g_ex.fe_start = -1;
@@ -5628,7 +5632,7 @@ void ext4_discard_preallocations(struct inode *inode)
 	if (EXT4_SB(sb)->s_mount_state & EXT4_FC_REPLAY)
 		return;
 
-	mb_debug(sb, "discard preallocation for inode %lu\n",
+	mb_debug(sb, "discard preallocation for inode %llu\n",
 		 inode->i_ino);
 	trace_ext4_discard_preallocations(inode,
 			atomic_read(&ei->i_prealloc_active));
