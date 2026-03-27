@@ -2184,12 +2184,12 @@ static int trace_format_open(struct inode *inode, struct file *file)
 static ssize_t
 event_id_read(struct file *filp, char __user *ubuf, size_t cnt, loff_t *ppos)
 {
-	int id = (long)event_file_data(filp);
+	/* id is directly in i_private and available for inode's lifetime. */
+	int id = (long)file_inode(filp)->i_private;
 	char buf[32];
 	int len;
 
-	if (unlikely(!id))
-		return -ENODEV;
+	WARN_ON(!id);
 
 	len = sprintf(buf, "%d\n", id);
 
@@ -2247,12 +2247,8 @@ event_filter_write(struct file *filp, const char __user *ubuf, size_t cnt,
 
 	mutex_lock(&event_mutex);
 	file = event_file_file(filp);
-	if (file) {
-		if (file->flags & EVENT_FILE_FL_FREED)
-			err = -ENODEV;
-		else
-			err = apply_event_filter(file, buf);
-	}
+	if (file)
+		err = apply_event_filter(file, buf);
 	mutex_unlock(&event_mutex);
 
 	kfree(buf);
